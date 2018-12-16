@@ -20,12 +20,6 @@ spec:
       - name: planespotter
         image: yfauser/planespotter-app-server:1508888202fc85246248c0892c0d27dda34de8e1
         imagePullPolicy: IfNotPresent
-        env:
-          - name: MYSQL_ROOT_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: mysql-pass
-                key: password
         ports:
         - containerPort: 80
         volumeMounts:
@@ -35,17 +29,6 @@ spec:
         - name: config-volume
           configMap:
             name: planespotter-app-cfg
-      initContainers:
-      - name: p-db
-        image: xiaog/xgao-mysql-populate
-        imagePullPolicy: Always 
-        env:
-          - name: MYSQL_ROOT_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: mysql-pass
-                key: password
-
 ---
 apiVersion: v1
 kind: ConfigMap

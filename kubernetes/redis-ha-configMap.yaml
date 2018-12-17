@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cs-redis-ha-configmap
+  labels:
+    app: cs-redis-ha
+data:
+  init.sh: |
+    HOSTNAME="$(hostname)"
+    MASTER="$(redis-cli -h cs-redis-ha -p 26379 sentinel get-master-addr-by-name mymaster | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}')"
+    REDIS_CONF=/data/conf/redis.conf
+    SENTINEL_CONF=/data/conf/sentinel.conf
+
+    set -e
+    sentinel_update() {   
+        echo "Updating sentinel config"
+        sed -i "1s/^/sentinel monitor mymaster $1 6379 2 \\n/" "$SENTINEL_CONF"
+    }
+
+    redis_update() {   
+        echo "Updating redis config"    
+        echo "slaveof $1 6379" >> $REDIS_CONF
+    }
+
+    setup_defaults(){
+        echo "Setting up defaults"
+        if [ "$HOSTNAME" == "cs-redis-ha-server-0" ]; then
+            echo "Setting this pod as the default master"
+            sed -i "s/^.*slaveof.*//" "$REDIS_CONF"        
+            sentinel_update "$POD_IP"    
+        else
+            echo "Setting default slave config.."       
+            echo "slaveof cs-redis-ha-server-0.cs-redis-ha 6379" >> "$REDIS_CONF"
+            sentinel_update "cs-redis-ha-server-0.cs-redis-ha"
+            redis_update "cs-redis-ha-server-0.cs-redis-ha"
+        fi
+    }
+
+    find_master(){
+       echo "Attempting to find master"
+       if [ ! `redis-cli -h $MASTER ping` ]; then       
+            echo "Can't ping master, attempting to force failover"      
+            if redis-cli -h cs-redis-ha -p 26379 sentinel failover mymaster | grep -q 'NOGOODSLAVE' ; then
+                setup_defaults
+                return 0
+            fi       
+            sleep 10       
+            MASTER="$(redis-cli -h cs-redis-ha -p 26379 sentinel get-master-addr-by-name mymaster | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}')"
+            if [ "$MASTER" ]; then
+                sentinel_update "$MASTER"         
+                redis_update "$MASTER"
+            else          
+                echo "Could not failover, exiting..."         
+                exit 1 
+            fi    
+        else        
+            echo "Found reachable master, updating config"
+            sentinel_update "$MASTER"
+            redis_update "$MASTER"    
+        fi
+    }
+
+    mkdir -p /data/conf/
+    echo "Initializing config.."
+    cp /readonly-config/redis.conf "$REDIS_CONF"
+    cp /readonly-config/sentinel.conf "$SENTINEL_CONF"
+
+    if [ "$MASTER" ]; then
+        find_master
+    else
+        setup_defaults
+    fi
+
+    if [ "$AUTH" ]; then
+        echo "Setting auth values"
+        sed -i "s/replace-default-auth/$AUTH/" "$REDIS_CONF" "$SENTINEL_CONF"
+    fi
+
+    echo "Ready..."
+
+  redis.conf: |
+    dir "/data"
+    maxmemory 0
+    maxmemory-policy volatile-lru
+    min-slaves-max-lag 5
+    min-slaves-to-write 1
+    rdbchecksum yes
+    rdbcompression yes
+    repl-diskless-sync yes
+    save 900 1
+
+  sentinel.conf: |
+    dir "/data"
+    sentinel down-after-milliseconds mymaster 10000
+    sentinel failover-timeout mymaster 180000
+    sentinel parallel-syncs mymaster 5

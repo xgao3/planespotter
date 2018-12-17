@@ -1,0 +1,121 @@
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cs-redis-ha
+  labels:
+    app: redis-ha
+spec:
+  type: ClusterIP
+  ports:
+  - name: server
+    port: 6379
+    targetPort: redis
+  - name: sentinel
+    port: 26379
+    targetPort: sentinel
+  clusterIP: None
+  selector:
+    app: redis-ha
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: redis-ha
+  name: cs-redis-ha-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-ha
+  serviceName: cs-redis-ha
+  template:
+    metadata:
+      annotations:
+        checksum/config: b45ef662d5db6405578e54b223a2205cdce07f4ab31831e2bf5a5dbcb5efc1bc
+      labels:
+        app: redis-ha
+    spec:
+      initContainers:
+      - name: config-init
+        image: redis:4.0.11-alpine
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        args:
+        - /readonly-config/init.sh
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: config
+          mountPath: /readonly-config
+          readOnly: true
+        - name: data
+          mountPath: /data
+      containers:
+      - name: redis
+        image: redis:4.0.11-alpine
+        imagePullPolicy: IfNotPresent
+        command:
+        - redis-server
+        args:
+        - /data/conf/redis.conf
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        resources: {}
+        ports:
+          - name: redis
+            containerPort: 6379
+        volumeMounts:
+        - mountPath: /data
+          name: data
+      - name: sentinel
+        image: redis:4.0.11-alpine
+        imagePullPolicy: IfNotPresent
+        command:
+        - redis-sentinel
+        args:
+        - /data/conf/sentinel.conf
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "-p", "26379", "ping"]
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        readinessProbe: 
+          exec:
+            command: ["redis-cli", "-p", "26379", "ping"]
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        resources: {}
+        ports:
+        - name: sentinel
+          containerPort: 26379
+        volumeMounts:
+        - mountPath: /data
+          name: data
+      volumes:
+        - name: config
+          configMap:
+            name: cs-redis-ha-configmap
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi

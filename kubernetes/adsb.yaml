@@ -1,0 +1,42 @@
+---
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: adsb-sync
+  labels:
+    app: adsb-sync
+    tier: data-sync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adsb-sync
+  template:
+    metadata:
+      labels:
+        app: adsb-sync
+    spec:
+      containers:
+      - name: adsb-sync
+        image: xiaog/adsb-sync:1d791ea6e96eb50adb15e773d1d783f511618c97
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: config-volume
+          mountPath: /usr/src/app/config
+      volumes:
+        - name: config-volume
+          configMap:
+            name: adsb-sync-cfg
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adsb-sync-cfg
+data:
+  config.ini: |
+    [main]
+    redis_server = cs-redis-ha
+    adsb_server_poll_url = https://public-api.adsbexchange.com/VirtualRadar/AircraftList.json
+    adsb_poll_filter = ?fRegS=N
+    adsb_type = poll
+

@@ -2,6 +2,8 @@ import mysql.connector
 import os
 
 ext_passwd = os.getenv('MYSQL_ROOT_PASSWORD').strip('\n')
+ext_host = os.getenv('MYSQL_HOST').strip('\n')
+
 os.system("gunzip /root/MASTER.txt.gz")
 os.system("gunzip /root/ACFTREF.txt.gz")
 
@@ -12,6 +14,9 @@ config_db = {
 }
 
 config_db['passwd'] = ext_passwd
+config_db['host'] = ext_host
+
+print ("external host is %s" % ext_host)
 
 mydb = mysql.connector.connect(**config_db) 
 mycursor = mydb.cursor()
@@ -153,14 +158,28 @@ def grant_access(cursor, usern):
         print("failed grant user: {}".format(err))
         exit(1)
 
-delete_user(mycursor, 'planespotter')
-delete_database(mycursor)
-create_database(mycursor)
-create_tables(mycursor)
-load_tables(mycursor, 'MASTER.txt', 'MASTER')
-load_tables(mycursor, 'ACFTREF.txt', 'ACFTREF')
-create_user(mycursor, 'planespotter', 'VMware1!')
-grant_access(mycursor,'planespotter')
-mydb.commit();
+def check_database(cursor, tablename):
+     cursor.execute("""
+         SELECT COUNT(*)
+         FROM information_schema.tables
+         WHERE table_name = '{0}'
+         """.format(tablename.replace('\'', '\'\'')))
+     if cursor.fetchone()[0] == 1:
+         return True
+   
+     return False
+
+
+#delete_user(mycursor, 'planespotter')
+#delete_database(mycursor)
+if (check_database(mycursor, 'MASTER') == False):
+    create_database(mycursor)
+    create_tables(mycursor)
+    load_tables(mycursor, 'MASTER.txt', 'MASTER')
+    load_tables(mycursor, 'ACFTREF.txt', 'ACFTREF')
+    create_user(mycursor, 'planespotter', 'VMware1!')
+    grant_access(mycursor,'planespotter')
+    mydb.commit();
+
 mydb.close()
 
